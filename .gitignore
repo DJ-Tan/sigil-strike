@@ -1,0 +1,55 @@
+# ─── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# ─── PyInstaller (build_game_exe.py, build_collect_exe.py) ───────────────
+# These contain absolute paths to the builder's machine and regenerate
+# on every build — never commit them.
+build/
+dist/
+*.spec
+
+# release/ is created by build_release.py — fresh-zip output, regenerable.
+release/
+
+# ─── Model training scratch dirs ─────────────────────────────────────────
+# collect_data.py writes raw frames / CSVs here. The trained checkpoints
+# under Teams/Team<N>/models/ are the artefacts we actually ship.
+code/model/landmark/teams/
+code/model/cnn/teams/
+code/model/teams/
+
+# ─── Editor / OS noise ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Claude Code state ───────────────────────────────────────────────────
+.claude/
+
+# ─── Per-team data (not checked in) ──────────────────────────────────────
+# Each team's config, custom model arch, and trained weights are kept out
+# of source control — they're large, team-specific, and regenerable from
+# the Colab notebook + collected samples.
+Teams/Team*/
+
+# ─── Background music (not checked in) ───────────────────────────────────
+# BGM tracks are large binary assets; keep them out of the repo and ship
+# them separately with the release zip.
+audio/bgm/
+
+# ─── Misc ────────────────────────────────────────────────────────────────
+# Snapshots saved by webcam_test.py
+snapshot_*.jpg

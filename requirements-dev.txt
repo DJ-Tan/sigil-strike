@@ -1,0 +1,5 @@
+# Dependencies needed to run the unit tests under code/test-cases/.
+# Used by .github/workflows/tests.yml.
+pytest>=7.0
+pygame>=2.5
+numpy>=1.24
