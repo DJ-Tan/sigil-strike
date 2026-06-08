@@ -31,17 +31,19 @@ class TestMatchCombo:
     def test_dodge_roll(self):
         assert match_combo([M1, M3, M5]) == Move.DODGE_ROLL
 
-    def test_power_strike_move1(self):
-        assert match_combo([M1, M1, M1]) == Move.POWER_STRIKE
+    def test_power_strike_aba(self):
+        # Power Strike: X-Y-X with X != Y.
+        assert match_combo([M1, M2, M1]) == Move.POWER_STRIKE
 
-    def test_power_strike_move4(self):
-        assert match_combo([M4, M4, M4]) == Move.POWER_STRIKE
+    def test_power_strike_dfd(self):
+        assert match_combo([M3, M5, M3]) == Move.POWER_STRIKE
 
-    def test_mend_aba(self):
-        assert match_combo([M1, M2, M1]) == Move.MEND
+    def test_mend_all_same_move1(self):
+        # Mend: any three identical actions.
+        assert match_combo([M1, M1, M1]) == Move.MEND
 
-    def test_mend_cdc(self):
-        assert match_combo([M3, M5, M3]) == Move.MEND
+    def test_mend_all_same_move4(self):
+        assert match_combo([M4, M4, M4]) == Move.MEND
 
     def test_no_match_returns_none(self):
         # [M1, M2, M4] matches no specific sequence and no generic pattern.
@@ -51,9 +53,9 @@ class TestMatchCombo:
         with pytest.raises(ValueError):
             match_combo([M1, M2])
 
-    def test_all_same_is_power_strike_not_mend(self):
-        # [M2, M2, M2] fits X-Y-X only if Y≠X; Power Strike is checked first.
-        assert match_combo([M2, M2, M2]) == Move.POWER_STRIKE
+    def test_all_same_is_mend_not_power_strike(self):
+        # [M2, M2, M2] fits the X-X-X pattern; Mend now owns that combo.
+        assert match_combo([M2, M2, M2]) == Move.MEND
 
     def test_specific_sequence_beats_power_strike(self):
         # COMBO_BLAST sequence must win over any generic pattern.

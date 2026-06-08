@@ -57,7 +57,8 @@ class TestAddAction:
         assert Move.COMBO_BLAST in player.move_queue
 
     def test_power_strike_recognized(self, player):
-        player.add_action(M4); player.add_action(M4)
+        # Power Strike is now triggered by X-Y-X (X != Y).
+        player.add_action(M4); player.add_action(M5)
         result = player.add_action(M4)
         assert result == Move.POWER_STRIKE
 
@@ -93,12 +94,13 @@ class TestAddAction:
 
 class TestMoveQueue:
     def _enqueue_power_strike(self, player):
-        player.add_action(M1); player.add_action(M1); player.add_action(M1)
+        # Power Strike: X-Y-X with X != Y.
+        player.add_action(M1); player.add_action(M2); player.add_action(M1)
 
     def test_pop_returns_first_in(self, player):
         # COMBO_BLAST enqueued first, then POWER_STRIKE
         player.add_action(M1); player.add_action(M2); player.add_action(M3)
-        player.add_action(M1); player.add_action(M1); player.add_action(M1)
+        player.add_action(M1); player.add_action(M2); player.add_action(M1)
         assert player.pop_move() == Move.COMBO_BLAST
         assert player.pop_move() == Move.POWER_STRIKE
 
