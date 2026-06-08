@@ -22,15 +22,21 @@ Controls (in the camera window, both modes):
 Output layout (written next to the .exe / script):
     CNN       → teams/Team<N>/images/<class>/frame_XXXXX.jpg
     Landmark  → teams/Team<N>/hand_sign_data.csv
+
+After each session ends, the team folder is also bundled into Team<N>.zip
+(rooted at Team<N>/...) for easy upload to the Colab training notebook.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import pathlib
 import sys
+import time
+import zipfile
 
 # Silence OpenCV's verbose backend chatter before cv2 is imported.
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
@@ -69,10 +75,12 @@ CLASS_KEYS = {
     ord("4"): "move4",
     ord("5"): "move5",
 }
-CLASS_NAMES    = list(CLASS_KEYS.values())
-CAM_SCAN_RANGE = 10
-CNN_SAVE_SIZE  = (224, 224)
-MAX_HANDS      = 4
+CLASS_NAMES       = list(CLASS_KEYS.values())
+CAM_SCAN_RANGE    = 10
+CNN_SAVE_SIZE     = (224, 224)
+MAX_HANDS         = 4
+COUNTDOWN_SECONDS = 3       # CNN-only: prep window before frames start saving
+COUNTDOWN_DIM     = 0.5     # frame brightness multiplier during the countdown
 
 
 # ───────────────────────────────── camera helpers ────────────────────────────
@@ -86,6 +94,131 @@ def find_camera() -> int | None:
             return idx
         cap.release()
     return None
+
+
+def _draw_counter_panel(img, lines: list[str], x: int, y: int,
+                        line_height: int = 22, font_scale: float = 0.5,
+                        thickness: int = 1) -> None:
+    """Render `lines` over a semi-transparent dark panel so text stays legible
+    against any webcam background."""
+    if not lines:
+        return
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    max_w = max(cv2.getTextSize(line, font, font_scale, thickness)[0][0]
+                for line in lines)
+    (_, text_h), _ = cv2.getTextSize("Ag", font, font_scale, thickness)
+    pad_x, pad_y = 8, 6
+    x1, y1 = max(0, x - pad_x), max(0, y - text_h - pad_y)
+    x2 = x + max_w + pad_x
+    y2 = y + line_height * (len(lines) - 1) + pad_y
+    overlay = img.copy()
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.55, img, 0.45, 0, img)
+    yy = y
+    for line in lines:
+        cv2.putText(img, line, (x, yy), font, font_scale,
+                    (240, 240, 240), thickness, cv2.LINE_AA)
+        yy += line_height
+
+
+def _print_counts_table(counts: dict, mode_label: str) -> None:
+    """Render existing per-move counts as a small ASCII table."""
+    print()
+    print(f"Existing {mode_label} data:")
+    print("  +---------+--------+")
+    print("  | Move    |  Count |")
+    print("  +---------+--------+")
+    for cls in CLASS_NAMES:
+        print(f"  | {cls:<7} | {counts.get(cls, 0):>6} |")
+    print("  +---------+--------+")
+
+
+def _prompt_reset_moves(counts: dict, mode_label: str) -> list[str]:
+    """Show a counts table and ask the user which moves to clear.
+
+    If `counts` has no entries > 0 (no existing data for this pipeline), skip
+    the prompt entirely and return [].
+    """
+    if not any(c > 0 for c in counts.values()):
+        return []
+    _print_counts_table(counts, mode_label)
+    ans = input("Reset data for any moves before starting? [y/N]: ").strip().lower()
+    if ans not in ("y", "yes"):
+        return []
+    raw = input("Which moves to clear? (comma-separated, e.g. 1,3,4): ").strip()
+    if not raw:
+        print("[collect] No moves resetted.")
+        return []
+    moves: list[str] = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if not tok.isdigit() or not 1 <= int(tok) <= 5:
+            print(f"[collect] Skipping invalid move '{tok}' (must be 1-5).")
+            continue
+        name = f"move{int(tok)}"
+        if name not in moves:
+            moves.append(name)
+    if not moves:
+        print("[collect] No moves resetted.")
+    return moves
+
+
+def _reset_cnn_classes(class_dirs: dict, moves: list[str]) -> None:
+    """Delete every .jpg under each named class directory."""
+    for m in moves:
+        d = class_dirs.get(m)
+        if d is None or not d.exists():
+            print(f"[collect] {m}: nothing to clear.")
+            continue
+        n = 0
+        for jpg in d.glob("*.jpg"):
+            jpg.unlink()
+            n += 1
+        print(f"[collect] {m}: cleared {n} image(s).")
+
+
+def _reset_landmark_rows(data_file: pathlib.Path, moves: list[str]) -> None:
+    """Drop rows whose first column matches any name in `moves`."""
+    if not data_file.exists():
+        print(f"[collect] {data_file.name} not found — nothing to clear.")
+        return
+    targets = set(moves)
+    kept: list[list[str]] = []
+    removed = 0
+    with open(data_file, newline="") as f:
+        for row in csv.reader(f):
+            if row and row[0] in targets:
+                removed += 1
+            else:
+                kept.append(row)
+    with open(data_file, "w", newline="") as f:
+        csv.writer(f).writerows(kept)
+    print(f"[collect] Cleared {removed} row(s) for {sorted(targets)}.")
+
+
+def _zip_team_folder(team: int, suffix: str) -> None:
+    """Bundle teams/Team{N}/ into Team{N}.zip with Team{N}/... archive paths.
+
+    Only files matching `suffix` (e.g. ".jpg" for CNN, ".csv" for landmark)
+    are included, so stray notes / OS metadata don't end up in the upload.
+    """
+    team_dir = app_dir() / "teams" / f"Team{team}"
+    if not team_dir.exists():
+        return
+    suffix_lower = suffix.lower()
+    files = [p for p in team_dir.rglob(f"*{suffix}")
+             if p.is_file() and p.suffix.lower() == suffix_lower]
+    if not files:
+        print(f"[zip] No {suffix} files in {team_dir} — skipping zip.")
+        return
+    zip_path = app_dir() / f"Team{team}.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            arcname = f"Team{team}/{f.relative_to(team_dir).as_posix()}"
+            zf.write(f, arcname)
+    print(f"[zip] Wrote {len(files)} file(s) -> {zip_path}")
 
 
 def open_camera(cam_arg: int | None) -> cv2.VideoCapture:
@@ -107,14 +240,22 @@ def run_cnn(team: int, cam_arg: int | None) -> None:
     for d in class_dirs.values():
         d.mkdir(parents=True, exist_ok=True)
 
-    cap = open_camera(cam_arg)
     class_counts = {cls: len(list(d.glob("*.jpg"))) for cls, d in class_dirs.items()}
+
+    moves_to_reset = _prompt_reset_moves(class_counts, "CNN")
+    if moves_to_reset:
+        _reset_cnn_classes(class_dirs, moves_to_reset)
+        class_counts = {cls: len(list(d.glob("*.jpg"))) for cls, d in class_dirs.items()}
+
+    cap = open_camera(cam_arg)
 
     print(f"[collect_cnn] Team {team} — existing counts: {class_counts}")
     print("[collect_cnn] Show BOTH hands forming the shape.")
     print("[collect_cnn] Press 1-5 to record, SPACE to stop, Q to quit.")
 
     recording_class: str | None = None
+    countdown_class: str | None = None
+    countdown_end:   float      = 0.0
     try:
         while cap.isOpened():
             ok, frame = cap.read()
@@ -122,37 +263,61 @@ def run_cnn(team: int, cam_arg: int | None) -> None:
                 break
             frame = cv2.flip(frame, 1)
 
+            now = time.time()
+            if countdown_class is not None and now >= countdown_end:
+                recording_class = countdown_class
+                countdown_class = None
+                print(f"[collect_cnn] Recording: {recording_class}")
+
             if recording_class is not None:
                 count     = class_counts[recording_class]
                 save_path = class_dirs[recording_class] / f"frame_{count:05d}.jpg"
                 cv2.imwrite(str(save_path), cv2.resize(frame, CNN_SAVE_SIZE))
                 class_counts[recording_class] += 1
 
-            status_color = (0, 0, 255) if recording_class else (200, 200, 200)
-            status_text  = (f"RECORDING: {recording_class.upper()}"
-                            if recording_class else "IDLE  (press 1-5)")
-            cv2.putText(frame, status_text, (10, 30),
+            display = frame
+            if countdown_class is not None:
+                display = cv2.convertScaleAbs(frame, alpha=COUNTDOWN_DIM, beta=0)
+                seconds_left = max(1, math.ceil(countdown_end - now))
+                text = str(seconds_left)
+                (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 6.0, 12)
+                cx = (display.shape[1] - tw) // 2
+                cy = (display.shape[0] + th) // 2
+                cv2.putText(display, text, (cx, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 6.0, (255, 255, 255), 12)
+
+            if recording_class is not None:
+                status_text, status_color = f"RECORDING: {recording_class.upper()}", (0, 0, 255)
+            elif countdown_class is not None:
+                status_text, status_color = f"GET READY: {countdown_class.upper()}", (0, 200, 255)
+            else:
+                status_text, status_color = "IDLE  (press 1-5)", (200, 200, 200)
+            cv2.putText(display, status_text, (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
 
-            y = 60
-            for cls in CLASS_NAMES:
-                cv2.putText(frame, f"  {cls}: {class_counts[cls]}", (10, y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-                y += 22
+            _draw_counter_panel(
+                display,
+                [f"  {cls}: {class_counts[cls]}" for cls in CLASS_NAMES],
+                10, 60,
+            )
 
-            cv2.imshow(f"Collect CNN Images - Team {team}", frame)
+            cv2.imshow(f"Collect CNN Images - Team {team}", display)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
             elif key == ord(" "):
                 recording_class = None
+                countdown_class = None
             elif key in CLASS_KEYS:
-                recording_class = CLASS_KEYS[key]
-                print(f"[collect_cnn] Recording: {recording_class}")
+                countdown_class = CLASS_KEYS[key]
+                countdown_end   = time.time() + COUNTDOWN_SECONDS
+                recording_class = None
+                print(f"[collect_cnn] Countdown {COUNTDOWN_SECONDS}s -> {countdown_class}")
     finally:
         cap.release()
         cv2.destroyAllWindows()
         print(f"[collect_cnn] Final counts: {class_counts}")
+        _zip_team_folder(team, ".jpg")
 
 
 # ─────────────────────────────── landmark pipeline ───────────────────────────
@@ -197,18 +362,29 @@ def run_landmark(team: int, cam_arg: int | None) -> None:
     team_dir.mkdir(parents=True, exist_ok=True)
     data_file = team_dir / "hand_sign_data.csv"
 
+    def _read_counts() -> dict:
+        counts = {cls: 0 for cls in CLASS_NAMES}
+        if data_file.exists():
+            with open(data_file, newline="") as f:
+                for row in csv.reader(f):
+                    if row:
+                        counts[row[0]] = counts.get(row[0], 0) + 1
+        return counts
+
+    class_counts = _read_counts()
+
+    moves_to_reset = _prompt_reset_moves(class_counts, "Landmark")
+    if moves_to_reset:
+        _reset_landmark_rows(data_file, moves_to_reset)
+        class_counts = _read_counts()
+
     drawing_utils    = tasks.vision.drawing_utils
     hand_connections = tasks.vision.HandLandmarksConnections.HAND_CONNECTIONS
 
     cap = open_camera(cam_arg)
 
     samples: list[list] = []
-    class_counts = {cls: 0 for cls in CLASS_NAMES}
-    if data_file.exists():
-        with open(data_file, newline="") as f:
-            for row in csv.reader(f):
-                if row:
-                    class_counts[row[0]] = class_counts.get(row[0], 0) + 1
+    if any(c > 0 for c in class_counts.values()):
         print(f"[collect_lm] Existing data: {class_counts}")
 
     print(f"[collect_lm] Team {team}")
@@ -262,11 +438,11 @@ def run_landmark(team: int, cam_arg: int | None) -> None:
             cv2.putText(frame, hands_text, (10, 55),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, hands_color, 2)
 
-            y = 85
-            for cls in CLASS_NAMES:
-                cv2.putText(frame, f"  {cls}: {class_counts.get(cls, 0)}", (10, y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-                y += 22
+            _draw_counter_panel(
+                frame,
+                [f"  {cls}: {class_counts.get(cls, 0)}" for cls in CLASS_NAMES],
+                10, 85,
+            )
 
             cv2.imshow(f"Collect Landmark Data - Team {team}", frame)
             key = cv2.waitKey(1) & 0xFF
@@ -291,6 +467,7 @@ def run_landmark(team: int, cam_arg: int | None) -> None:
         else:
             print("[collect_lm] No samples recorded.")
         print(f"[collect_lm] Totals: {class_counts}")
+        _zip_team_folder(team, ".csv")
 
 
 # ───────────────────────────────── interactive prompts ───────────────────────

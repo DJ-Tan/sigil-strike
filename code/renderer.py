@@ -250,8 +250,8 @@ class Renderer:
         self._draw_title_banner(surf, resolve_timer, resolve_interval, elapsed)
         self._draw_cam_panel(surf, p1, x=0)
         self._draw_cam_panel(surf, p2, x=WIDTH - CAM_W)
-        self._draw_action_circles(surf, p1, x=0, waiting=waiting)
-        self._draw_action_circles(surf, p2, x=WIDTH - CAM_W, waiting=waiting)
+        self._draw_action_circles(surf, p1, x=0)
+        self._draw_action_circles(surf, p2, x=WIDTH - CAM_W)
         self._draw_arena(surf, event_msg, event_msg_color,
                          event_msg_life, resolve_timer)
         self._draw_move_queue_bar(surf, p1, p2)
@@ -418,8 +418,7 @@ class Renderer:
 
     # ── Action-buffer circles ─────────────────────────────────────────────────
 
-    def _draw_action_circles(self, surf, player: Player, x: int,
-                              waiting: bool = False) -> None:
+    def _draw_action_circles(self, surf, player: Player, x: int) -> None:
         # ── Strip background ─────────────────────────────────────────────────
         strip = pygame.Rect(x, SLOT_Y, CAM_W, SLOT_H)
         draw_rounded_rect(surf, (15, 15, 35), strip,
@@ -461,11 +460,11 @@ class Renderer:
                       bx + box_w // 2, box_y + BOX_H // 2)
 
         # ── Key hints below the scoreboard boxes ──────────────────────────────
-        # While the READY overlay is up, suppress the keyboard hint for any
-        # player who already has a working camera — they'll play via gestures.
+        # Only show when this player has no camera feed — gesture input
+        # supersedes the keyboard mapping when a camera is active.
         idx = 0 if x == 0 else 1
         cam_detected = idx < len(self._caps) and self._caps[idx] is not None
-        if not (waiting and cam_detected):
+        if not cam_detected:
             keys     = "Q W E R T" if player.pid == 1 else "Y U I O P"
             hint_y   = box_y + BOX_H + 14
             draw_text(surf, f"{keys}  →  ① ② ③ ④ ⑤",

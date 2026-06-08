@@ -237,11 +237,19 @@ class Game:
             if not _ML_OK:
                 print("[game] mediapipe/joblib not installed — landmark detection disabled")
             else:
-                landmarker_path = str(
-                    resource_dir() / "model" / "landmark" / "hand_landmarker.task")
-                if not os.path.exists(landmarker_path):
-                    print("[game] hand_landmarker.task not found — landmark detection disabled")
-                    landmarker_path = ""
+                # Frozen build bundles the task file at <MEIPASS>/model/landmark/;
+                # source mode has it at code/model/landmark/. Try both.
+                candidates = [
+                    resource_dir() / "model" / "landmark" / "hand_landmarker.task",
+                    resource_dir() / "code"  / "model" / "landmark" / "hand_landmarker.task",
+                ]
+                for cand in candidates:
+                    if cand.exists():
+                        landmarker_path = str(cand)
+                        break
+                if not landmarker_path:
+                    print(f"[game] hand_landmarker.task not found in {candidates} "
+                          "— landmark detection disabled")
 
         # ── CNN runtime (PyTorch) ──────────────────────────────────────────
         if needs_cnn:

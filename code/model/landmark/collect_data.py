@@ -15,6 +15,9 @@ Controls (in the camera window):
 
 Both hands must be visible to record a sample.
 Data is saved to:  teams/TeamN/hand_sign_data.csv
+
+After the session ends, the folder is also bundled into TeamN.zip
+(rooted at TeamN/...) for easy upload to the Colab training notebook.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import csv
 import os
 import pathlib
 import sys
+import zipfile
 
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
 os.environ["OPENCV_LOG_LEVEL"]     = "SILENT"
@@ -46,6 +50,120 @@ CLASS_KEYS = {
 
 MAX_HANDS     = 4
 CAM_SCAN_RANGE = 10
+
+
+def draw_counter_panel(img, lines: list[str], x: int, y: int,
+                       line_height: int = 22, font_scale: float = 0.5,
+                       thickness: int = 1) -> None:
+    """Render `lines` over a semi-transparent dark panel so text stays legible
+    against any webcam background."""
+    if not lines:
+        return
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    max_w = max(cv2.getTextSize(line, font, font_scale, thickness)[0][0]
+                for line in lines)
+    (_, text_h), _ = cv2.getTextSize("Ag", font, font_scale, thickness)
+    pad_x, pad_y = 8, 6
+    x1, y1 = max(0, x - pad_x), max(0, y - text_h - pad_y)
+    x2 = x + max_w + pad_x
+    y2 = y + line_height * (len(lines) - 1) + pad_y
+    overlay = img.copy()
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.55, img, 0.45, 0, img)
+    yy = y
+    for line in lines:
+        cv2.putText(img, line, (x, yy), font, font_scale,
+                    (240, 240, 240), thickness, cv2.LINE_AA)
+        yy += line_height
+
+
+def print_counts_table(counts: dict) -> None:
+    """Render existing per-move counts as a small ASCII table."""
+    print()
+    print("Existing Landmark data:")
+    print("  +---------+--------+")
+    print("  | Move    |  Count |")
+    print("  +---------+--------+")
+    for cls in CLASS_KEYS.values():
+        print(f"  | {cls:<7} | {counts.get(cls, 0):>6} |")
+    print("  +---------+--------+")
+
+
+def read_csv_counts(data_file: pathlib.Path) -> dict:
+    """Count rows per class in the landmark CSV (empty/missing -> all zeros)."""
+    counts = {cls: 0 for cls in CLASS_KEYS.values()}
+    if data_file.exists():
+        with open(data_file, newline="") as f:
+            for row in csv.reader(f):
+                if row:
+                    counts[row[0]] = counts.get(row[0], 0) + 1
+    return counts
+
+
+def prompt_reset_moves(counts: dict) -> list[str]:
+    """Show a counts table and ask which moves to clear.
+
+    If no existing data for any move, skip the prompt entirely and return [].
+    """
+    if not any(c > 0 for c in counts.values()):
+        return []
+    print_counts_table(counts)
+    ans = input("Reset data for any moves before starting? [y/N]: ").strip().lower()
+    if ans not in ("y", "yes"):
+        return []
+    raw = input("Which moves to clear? (comma-separated, e.g. 1,3,4): ").strip()
+    if not raw:
+        print("[collect] No moves resetted.")
+        return []
+    moves: list[str] = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if not tok.isdigit() or not 1 <= int(tok) <= 5:
+            print(f"[collect] Skipping invalid move '{tok}' (must be 1-5).")
+            continue
+        name = f"move{int(tok)}"
+        if name not in moves:
+            moves.append(name)
+    if not moves:
+        print("[collect] No moves resetted.")
+    return moves
+
+
+def reset_csv_rows(data_file: pathlib.Path, moves: list[str]) -> None:
+    """Drop rows whose first column matches any name in `moves`."""
+    if not data_file.exists():
+        print(f"[collect] {data_file.name} not found — nothing to clear.")
+        return
+    targets = set(moves)
+    kept: list[list[str]] = []
+    removed = 0
+    with open(data_file, newline="") as f:
+        for row in csv.reader(f):
+            if row and row[0] in targets:
+                removed += 1
+            else:
+                kept.append(row)
+    with open(data_file, "w", newline="") as f:
+        csv.writer(f).writerows(kept)
+    print(f"[collect] Cleared {removed} row(s) for {sorted(targets)}.")
+
+
+def zip_team_folder(team_dir: pathlib.Path, zip_path: pathlib.Path) -> None:
+    """Bundle .csv files under team_dir into zip_path, rooted at Team<N>/..."""
+    if not team_dir.exists():
+        return
+    files = [p for p in team_dir.rglob("*.csv")
+             if p.is_file() and p.suffix.lower() == ".csv"]
+    if not files:
+        print(f"[collect] No .csv files in {team_dir} — skipping zip.")
+        return
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            arcname = f"{team_dir.name}/{f.relative_to(team_dir).as_posix()}"
+            zf.write(f, arcname)
+    print(f"[collect] Wrote {len(files)} file(s) -> {zip_path}")
 
 
 def find_camera() -> int | None:
@@ -105,6 +223,13 @@ def main() -> None:
     team_dir.mkdir(parents=True, exist_ok=True)
     data_file = team_dir / "hand_sign_data.csv"
 
+    class_counts = read_csv_counts(data_file)
+
+    moves_to_reset = prompt_reset_moves(class_counts)
+    if moves_to_reset:
+        reset_csv_rows(data_file, moves_to_reset)
+        class_counts = read_csv_counts(data_file)
+
     if not LANDMARKER_PATH.exists():
         print(f"[collect] Landmarker model not found: {LANDMARKER_PATH}")
         sys.exit(1)
@@ -124,13 +249,8 @@ def main() -> None:
 
     samples: list[list] = []
     recording_class: str | None = None
-    class_counts: dict[str, int] = {v: 0 for v in CLASS_KEYS.values()}
 
-    if data_file.exists():
-        with open(data_file, newline="") as f:
-            for row in csv.reader(f):
-                if row:
-                    class_counts[row[0]] = class_counts.get(row[0], 0) + 1
+    if any(c > 0 for c in class_counts.values()):
         print(f"[collect] Existing data: {class_counts}")
 
     print(f"[collect] Team {args.team} — cam {cam_index}")
@@ -180,11 +300,12 @@ def main() -> None:
             cv2.putText(frame, hands_text, (10, 55),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, hands_color, 2)
 
-            y = 85
-            for cls in ["move1", "move2", "move3", "move4", "move5"]:
-                cv2.putText(frame, f"  {cls}: {class_counts.get(cls, 0)}", (10, y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-                y += 22
+            draw_counter_panel(
+                frame,
+                [f"  {cls}: {class_counts.get(cls, 0)}"
+                 for cls in ["move1", "move2", "move3", "move4", "move5"]],
+                10, 85,
+            )
 
             cv2.imshow(f"Collect Landmark Data — Team {args.team}", frame)
             key = cv2.waitKey(1) & 0xFF
@@ -212,6 +333,8 @@ def main() -> None:
         else:
             print("[collect] No samples recorded.")
         print(f"[collect] Totals: {class_counts}")
+
+        zip_team_folder(team_dir, SCRIPT_DIR / f"Team{args.team}.zip")
 
 
 if __name__ == "__main__":

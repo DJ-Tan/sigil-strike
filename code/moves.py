@@ -8,11 +8,11 @@ Defines the two fundamental building blocks of the game:
 
 Combo categories
 ────────────────
-  Power Strike (weak)   – any 3 identical actions.
+  Power Strike (weak)   – 1st and 3rd actions the same, 2nd different.
   Combo Blast  (strong) – 3 different actions in a fixed order.
   Shield Wall           – 3 different actions in a fixed order.
   Dodge Roll            – 3 different actions in a fixed order.
-  Mend         (heal)   – 1st and 3rd actions the same, 2nd different.
+  Mend         (heal)   – any 3 identical actions.
 
 Resolution rules
 ────────────────
@@ -98,7 +98,7 @@ def _all_same(seq: list[Action]) -> bool:
 
 def _first_equals_third(seq: list[Action]) -> bool:
     # 1st and 3rd identical, 2nd different (excludes the all-same case which
-    # belongs to Power Strike).
+    # belongs to Mend).
     return seq[0] == seq[2] and seq[1] != seq[0]
 
 
@@ -108,8 +108,8 @@ COMBO_TABLE: list[tuple[Move, callable]] = [
     (Move.SHIELD_WALL, lambda s: s == _SHIELD_SEQ),
     (Move.DODGE_ROLL,  lambda s: s == _DODGE_SEQ),
     # Generic patterns.
-    (Move.POWER_STRIKE, _all_same),
-    (Move.MEND,         _first_equals_third),
+    (Move.POWER_STRIKE, _first_equals_third),
+    (Move.MEND,         _all_same),
 ]
 
 
@@ -155,11 +155,11 @@ def _hint(names: list[str]) -> str:
 
 
 MOVE_HINTS: dict[Move, str] = {
-    Move.POWER_STRIKE: "Any ①①① / ②②② / ③③③ / ④④④ / ⑤⑤⑤",
+    Move.POWER_STRIKE: "Any X → Y → X  (X ≠ Y)",
     Move.COMBO_BLAST:  _hint(cfg.STRONG_MOVE_SEQUENCE),
     Move.SHIELD_WALL:  _hint(cfg.SHIELD_SEQUENCE),
     Move.DODGE_ROLL:   _hint(cfg.DODGE_SEQUENCE),
-    Move.MEND:         "Any X → Y → X  (X ≠ Y)",
+    Move.MEND:         "Any ①①① / ②②② / ③③③ / ④④④ / ⑤⑤⑤",
 }
 
 

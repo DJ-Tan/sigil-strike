@@ -1,6 +1,6 @@
 # SIGIL STRIKE — 2-Player Hand-Sign Fighter
 
-This game was designed for the DSO's World of Science (WOS) AI computer vision workshop 2026. Two players throw hand-sign gestures at the webcam; the game reads them, queues combos, and resolves a round at regular intervals. Keyboard input is always available as a fallback.
+Designed for the DSO's World of Science (WOS) AI computer vision workshop 2026. Two players throw hand-sign gestures at the webcam; the game reads them, queues combos, and resolves a round every five seconds. Keyboard input is always available as a fallback.
 
 ---
 
@@ -121,49 +121,41 @@ World-of-Science/
 │   ├── bracket.py              Tournament bracket
 │   ├── paths.py                resource_dir() / external_dir() — bundle vs. ext layout
 │   ├── configs/                Gameplay tunables (INI + Python loaders)
-│   │   ├── __init__.py
 │   │   ├── move_config.ini     Editable: damage, heal, defence %, combo sequences
 │   │   ├── time_config.ini     Editable: resolve interval, deathmatch timings
 │   │   ├── move_config.py      Reads move_config.ini, exposes values as attributes
 │   │   └── time_config.py      Reads time_config.ini, exposes values as attributes
-│   ├── model/
-│   │   ├── run.sh              Dispatcher → collect | train | infer
-│   │   ├── sigil_strike_colab.ipynb   Colab notebook for collect / train / infer
-│   │   ├── collect_data.py     Unified collector launcher (CNN or landmark)
-│   │   ├── landmark/           MediaPipe landmarks → sklearn classifier
-│   │   │   ├── collect_data.py
-│   │   │   ├── train_model.py
-│   │   │   ├── inference.py
-│   │   │   ├── hand_landmarker.task
-│   │   │   └── requirements.txt
-│   │   └── cnn/                MobileNetV2 transfer learning
-│   │       ├── collect_data.py
-│   │       ├── train_model.py
-│   │       ├── inference.py
-│   │       ├── gpu.py
-│   │       └── requirements.txt
-│   └── test-cases/
-│       ├── conftest.py
-│       ├── test_moves.py
-│       ├── test_player.py
-│       └── test_tournament.py
+│   └── model/
+│       ├── run.sh              Dispatcher → collect | train | infer
+│       ├── sigil_strike_colab.ipynb   Colab notebook for collect / train / infer
+│       ├── collect_data.py     Unified collector launcher (CNN or landmark)
+│       ├── landmark/           MediaPipe landmarks → sklearn classifier
+│       │   ├── collect_data.py
+│       │   ├── train_model.py
+│       │   ├── inference.py
+│       │   ├── hand_landmarker.task
+│       │   └── requirements.txt
+│       └── cnn/                MobileNetV2 transfer learning
+│           ├── collect_data.py
+│           ├── train_model.py
+│           ├── inference.py
+│           ├── gpu.py
+│           └── requirements.txt
 ├── scripts/                    Build & packaging scripts (kept separate from game code)
 │   ├── build_game_exe.py       PyInstaller build → dist/sigil_strike/sigil_strike.exe
 │   ├── build_release.py        Stages dist/sigil_strike/ + README into release/sigil_strike.zip
 │   └── build_collect_exe.py    PyInstaller build → dist/collect_data/collect_data.exe
 ├── Teams/                      Per-team configs + trained weights
 │   ├── Team1/
-│   │   ├── team.env            NAME, COLOR, MODEL_TYPE, thresholds
+│   │   ├── team.env            NAME, MODEL_TYPE, per-move thresholds
 │   │   ├── model_arch.py       (CNN only, optional) custom architecture
 │   │   └── models/             Trained checkpoint(s)
 │   └── Team2 ... Team6/
 ├── audio/
 │   ├── sfx/                    Sound effects (loudness-equalised at load time)
 │   └── bgm/                    Background music (stage-specific tracks)
-└── images/                     Action icons
+└── images/                     Sprites / portraits
 ```
-
-> **Note:** `audio/bgm/` tracks are omitted from the repository due to possible copyright issues, and the per-team model weights under `Teams/Team<N>/` are excluded due to their file size. Both are listed above for completeness — drop the files in at the indicated paths locally.
 
 ---
 
@@ -359,11 +351,11 @@ Each `play_match` call constructs a fresh `Game`, blocks until it resolves, then
 
 | P1 key | P2 key | Action |
 |--------|--------|--------|
-| Q      | Y      | Move1  |
-| W      | U      | Move2  |
-| E      | I      | Move3  |
-| R      | O      | Move4  |
-| T      | P      | Move5  |
+| Q      | A      | Move1  |
+| W      | S      | Move2  |
+| E      | D      | Move3  |
+| R      | F      | Move4  |
+| T      | G      | Move5  |
 
 Same five actions are also fed in by the hand-sign pipeline when active.
 
@@ -373,15 +365,15 @@ Same five actions are also fed in by the hand-sign pipeline when active.
 
 | Move          | Combo                       | Type      | Effect                                                       |
 |---------------|-----------------------------|-----------|--------------------------------------------------------------|
-| Power Strike  | Any 3 identical *           | Offensive | −25 HP to opponent                                           |
+| Power Strike  | Any X → Y → X   (X ≠ Y)     | Offensive | −25 HP to opponent                                           |
 | Combo Blast   | Move1 → Move2 → Move3       | Offensive | −45 HP to opponent                                           |
 | Shield Wall   | Move3 → Move4 → Move5       | Defensive | Fully blocks Power Strike (reflects 30 %); leaks 20 % of Combo Blast |
 | Dodge Roll    | Move1 → Move3 → Move5       | Defensive | 70 % chance to dodge Power Strike; 33 % chance vs Combo Blast |
-| Mend          | Any X → Y → X   (X ≠ Y)     | Healing   | +35 HP (cancelled by opponent's attack)                      |
+| Mend          | Any 3 identical *           | Healing   | +35 HP (cancelled by opponent's attack)                      |
 
 \* Move1×3, Move2×3, Move3×3, Move4×3, or Move5×3 — any three identical actions in a row.
 
-The combo matcher checks the explicit sequences (Combo Blast, Shield Wall, Dodge Roll) before Power Strike's `X-X-X` catch-all and Mend's `X-Y-X` pattern. The sequences are chosen so no two combos collide.
+The combo matcher checks the explicit sequences (Combo Blast, Shield Wall, Dodge Roll) before Power Strike's `X-Y-X` pattern and Mend's `X-X-X` catch-all. The sequences are chosen so no two combos collide.
 
 ---
 
@@ -441,11 +433,11 @@ Each team trains its own gesture recogniser for `move1`…`move5`. Two pipelines
 | Pipeline   | What it does                                                                                                              | When to pick                                              |
 |------------|---------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------|
 | `landmark` | MediaPipe extracts 21 (x, y, z) keypoints per hand → sklearn RandomForest / MLP on a 126-d feature vector                 | Fastest on CPU; tiny dataset works; default for new teams |
-| `cnn`      | Raw 224×224 two-hand frames → fine-tuned MobileNetV2 → softmax over the 5 classes                                          | Better at gestures that the joint positions can't disambiguate (e.g. front/back of palm) |
+| `cnn`      | Raw 224×224 two-hand frames → fine-tuned MobileNetV2 → softmax over the 5 classes                                          | Better at gestures the joint positions can't disambiguate (e.g. front/back of palm) |
 
 ### Collection controls
 
-Use the prebuilt `collect_data.exe` to capture training samples — it bundles Python, OpenCV, MediaPipe, and the unified collector into a single 64-bit Windows binary (build it via `python scripts/build_collect_exe.py`; the output lands at `dist/collect_data/collect_data.exe`). Training data from the executable is written to a `teams/` folder.
+Use the prebuilt `collect_data.exe` to capture training samples — it bundles Python, OpenCV, MediaPipe, and the unified collector into a single 64-bit Windows binary (build it via `python scripts/build_collect_exe.py`; the output lands at `dist/collect_data/collect_data.exe`). Drop the .exe on any teammate's machine and double-click — training data is written to a `teams/` folder next to it.
 
 Run with no args for an interactive prompt, or pass flags:
 
@@ -486,7 +478,7 @@ For the CNN pipeline, teams can ship their own `model_arch.py` (the Colab notebo
 
 ```
 Teams/Team<N>/
-├── team.env              Team config (name, colour, MODEL_TYPE, thresholds)
+├── team.env              Team config (name, MODEL_TYPE, thresholds)
 ├── model_arch.py         (CNN only, optional) custom build_model()
 └── models/
     └── hand_sign_cnn.pth        (or hand_sign_classifier.pkl + label_encoder.pkl)
@@ -500,7 +492,6 @@ If `model_arch.py` is absent, the default architecture is used — so existing t
 
 ```
 NAME=ALPHA
-COLOR=255,120,60
 
 # landmark | cnn
 MODEL_TYPE=landmark
@@ -512,6 +503,8 @@ THRESHOLD_MOVE3=0.6
 THRESHOLD_MOVE4=0.6
 THRESHOLD_MOVE5=0.6
 ```
+
+Per-team display colors are no longer stored in `team.env`. They live in [`code/configs/team_colors.py`](code/configs/team_colors.py) as a `TEAM_COLORS` dict keyed by team number — edit that single file to recolor a team.
 
 `MODEL_TYPE` is honoured by both training (`run.sh auto`) and the in-game runtime — when the game launches it reads each player's `team.env` and loads the matching artefacts: `hand_sign_classifier.pkl` + `label_encoder.pkl` for `landmark`, or `hand_sign_cnn.pth` (+ optional `model_arch.py`) for `cnn`. The two players can use different `MODEL_TYPE`s in the same match. CNN mode requires `torch` and `torchvision` to be installed locally.
 

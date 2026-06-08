@@ -28,6 +28,7 @@ from typing import Optional
 import pygame
 
 import audio
+from configs.team_colors import TEAM_COLORS
 from game import Game
 from paths import external_dir
 
@@ -683,14 +684,8 @@ class BracketRenderer:
 
 _TEAMS_DIR = external_dir() / "Teams"
 
-_DEFAULT_TEAMS = [
-    ("ALPHA",   (255, 120,  60)),
-    ("BRAVO",   ( 60, 180, 255)),
-    ("CHARLIE", ( 80, 220, 120)),
-    ("DELTA",   (255, 200,  60)),
-    ("ECHO",    (220,  80, 160)),
-    ("FOXTROT", (160, 120, 255)),
-]
+_DEFAULT_NAMES = ["ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT"]
+_FALLBACK_COLOR = (180, 180, 180)   # used if TEAM_COLORS is missing a number
 
 
 def _parse_env_file(path: pathlib.Path) -> dict[str, str]:
@@ -708,17 +703,13 @@ def _parse_env_file(path: pathlib.Path) -> dict[str, str]:
 
 
 def load_teams() -> list[Team]:
-    """Read Team1..Team6 from Teams/<TeamN>/team.env; fall back to defaults."""
+    """Read Team1..Team6 names from Teams/<TeamN>/team.env; colors come from
+    configs/team_colors.py."""
     teams = []
-    for i, (def_name, def_color) in enumerate(_DEFAULT_TEAMS, start=1):
+    for i, def_name in enumerate(_DEFAULT_NAMES, start=1):
         env = _parse_env_file(_TEAMS_DIR / f"Team{i}" / "team.env")
-        name = env.get("NAME", def_name)
-        raw  = env.get("COLOR", "")
-        try:
-            parts = tuple(int(c.strip()) for c in raw.split(","))
-            color = parts if len(parts) == 3 else def_color
-        except (ValueError, AttributeError):
-            color = def_color
+        name  = env.get("NAME", def_name)
+        color = TEAM_COLORS.get(i, _FALLBACK_COLOR)
         teams.append(Team(name, color))
     return teams
 
